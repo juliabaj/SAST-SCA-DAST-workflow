@@ -1,0 +1,35 @@
+name: DAST (OWASP ZAP)
+
+on:
+  push:
+    branches: [ "main" ]
+  workflow_dispatch: {}
+
+jobs:
+  dast:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Start app
+        run: |
+          docker compose up -d --build
+          sleep 20
+
+      - name: ZAP baseline scan
+        run: |
+          docker run --network host -t owasp/zap2docker-stable zap-baseline.py \
+            -t http://localhost:8080 \
+            -r zap_report.html || true
+
+      - name: Upload ZAP report
+        uses: actions/upload-artifact@v4
+        with:
+          name: zap_report.html
+          path: zap_report.html
+
+      - name: Stop app
+        if: always()
+        run: docker compose down
+
