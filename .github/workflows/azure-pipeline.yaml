@@ -1,8 +1,9 @@
+variables:
 - group: "SECURE_TOKENS"
 - name: snyk_token
   value: ${variables.SNYKTOKEN}
 - name: sonar_token
-  value: ${variables.SONARTOKEN}concurrency: 
+  value: ${variables.SONARTOKEN}
 
 stages:
 - stage: SonarCloud_SAST_Scan
