@@ -26,12 +26,28 @@ jobs:
       - name: Gitleaks scan
         uses: gitleaks/gitleaks-action@v2 #if any secrets found, default failed job
 
+  unit_tests:
+    name: Run unit tests
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v4
 
+    - name: Setup Java
+      uses: actions/setup-java@v4
+      with:
+        distribution: temurin
+        java-version: "17"
+
+    - name: Run tests
+      run: mvn test
+      
   sast:
+    needs: unit_tests
     uses: ./.github/workflows/sast-scan.yml
     secrets: inherit
 
   sca:
+    needs: unit_tests
     uses: ./.github/workflows/sca-scan.yml
     secrets: inherit
 
