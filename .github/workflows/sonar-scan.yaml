@@ -1,9 +1,7 @@
 name: CI/CD workflow for Maven Build and Sonar Code scan
 on:
-  push:
-    branches:
-      - main
-  workflow_dispatch:
+  workflow_call: {}
+
 jobs:
   build:
     runs-on: ubuntu-latest

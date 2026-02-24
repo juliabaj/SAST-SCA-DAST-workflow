@@ -1,0 +1,118 @@
+name: CD (main) - DAST + Terraform apply
+
+on:
+  push:
+    branches: ["main"]
+  workflow_dispatch:
+
+jobs:
+  changes:
+    runs-on: ubuntu-latest
+    outputs:
+      infra: ${{ steps.filter.outputs.infra }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dorny/paths-filter@v3
+        id: filter
+        with:
+          filters: |
+            infra:
+              - "infra/**"
+
+  tf_apply:
+    name: Terraform apply (only if infra changed)
+    runs-on: ubuntu_latest
+    needs: [changes]
+    if: ${{ needs.changes.outputs.infra == 'true' }}
+    defaults:
+      run:
+        working-directory: infra
+    steps:
+      - uses: actions/checkout@v4
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: "1.6.6"
+
+      - uses: azure/login@v2
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+          client-secret: ${{ secrets.AZURE_CLIENT_SECRET }}
+
+      - name: Terraform init/apply
+        run: |
+          terraform init
+          terraform apply -var-file=prod.tfvars -auto-approve
+          
+    deploy:
+      name: Build - Push ACR - Deploy AKS
+      runs-on: ubuntu-latest
+      needs: [ tf_apply ]
+      env:
+        ACR_NAME: myacr123
+        AKS_NAME: aks-prod
+        RG_NAME: rg-prod
+        IMAGE_NAME: mywebapp
+      steps:
+        - uses: actions/checkout@v4
+
+        # Azure login for ACR and AKS connection
+        - name: Azure login
+          uses: azure/login@v2
+          with:
+            client-id: ${{ secrets.AZURE_CLIENT_ID }}
+            tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+            subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+            client-secret: ${{ secrets.AZURE_CLIENT_SECRET }}
+
+        - name: Set image tag
+          run: echo "IMAGE_TAG=${GITHUB_SHA}" >> $GITHUB_ENV
+
+        - name: ACR login
+          run: az acr login --name $ACR_NAME
+
+        - name: Docker build
+          run: |
+            docker build -t $ACR_NAME.azurecr.io/$IMAGE_NAME:$IMAGE_TAG ./MyWebApp
+
+        - name: Docker push
+          run: |
+            docker push $ACR_NAME.azurecr.io/$IMAGE_NAME:$IMAGE_TAG
+
+        # kubeconfig for AKS
+        - name: Get AKS credentials
+          run: |
+            az aks get-credentials --resource-group $RG_NAME --name $AKS_NAME --overwrite-existing
+
+        - name: Update image in AKS Deployment
+          run: |
+            kubectl set image deployment/mywebapp mywebapp=$ACR_NAME.azurecr.io/$IMAGE_NAME:$IMAGE_TAG
+            kubectl rollout status deployment/mywebapp
+    dast:
+      name: DAST (OWASP ZAP)
+      runs-on: ubuntu-latest
+      needs: [tf_apply]
+      steps:
+        - uses: actions/checkout@v4
+
+        - name: Start app
+          run: |
+            docker compose up -d --build
+            sleep 20
+
+        - name: ZAP baseline scan
+          run: |
+            docker run --network host -t owasp/zap2docker-stable zap-baseline.py \
+              -t http://localhost:8080 \
+              -r zap_report.html || true
+
+        - name: Upload ZAP report
+          uses: actions/upload-artifact@v4
+          with:
+            name: zap_report.html
+            path: zap_report.html
+
+        - name: STOP APP
+          if: always()
+          run: docker compose down
